@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Admin - Vision Project</title>
+	<script src="./deps/vue.js"></script>
+<script>
+"use strict"
+
+let SOCKET = null;
+
+function argv() {
+	let result = {};
+	for (var arg of window.location.hash.substring(1).split("&")) {
+		let pos = arg.indexOf("=");
+		if (pos >= 0) {
+			result[arg.substring(0, pos)] = decodeURIComponent(arg.substring(pos + 1));
+		}
+	}
+	return result;
+}
+
+let app = {
+	el: '#app',
+	data() {
+		return {
+			viewPanel: 'connection',
+			debugPanel: null,
+			socket: null,
+			connection: {
+				address: "ws://localhost:30145/admin?token=",
+				myip: null,
+				error: null,
+				isready: false,
+			},
+			console: {
+				input: "",
+				history: [],
+				index: 0,
+				lines: [],
+			},
+			paused: false,
+			debugText: {},
+		};
+	},
+	computed: {
+		shareURL() {
+			return "";
+		},
+	},
+	methods: {
+		openPanel(panelId) {
+			this.viewPanel = panelId;
+		},
+		togglePause() {
+			this.paused = !this.paused;
+		},
+		connect() {
+			this.connection.error = null;
+
+			if (this.socket) {
+				this.disconnect(null);
+				return;
+			}
+
+			let sock = new WebSocket(this.connection.address);
+			this.socket = SOCKET = sock;
+			sock.onopen = e => {
+				this.viewPanel = 'console';
+				this.connection.isready = true;
+				this.consoleClear(null);
+				this.debugText = {};
+			};
+			sock.onmessage = e => {
+				try {
+					let data = JSON.parse(e.data);
+					switch (data.target) {
+						case 'console/log':
+							console.log(data.message);
+							this.console.lines.push("" + data.message);
+							break;
+						case 'debug/write':
+							this.debugWrite(data.message);
+							break;
+						default:
+							console.log(data.target, data.message);
+							break;
+					}
+				}
+				catch (ex) {
+					console.error(ex);
+				}
+			};
+			sock.onclose = e => this.disconnect(null);
+			sock.onerror = ex => {
+				this.disconnect(ex);
+			};
+		},
+		disconnect(ex) {
+			if (this.socket) {
+				this.socket.close();
+				this.socket = SOCKET = null;
+			}
+			this.viewPanel = 'connection';
+			this.connection.isready = false;
+			if (ex) {
+				this.connection.error = "Can't establish a connection to the server.";
+				console.error(ex);
+			}
+		},
+		consoleInput(e) {
+			let text = e.target.value;
+			if (this.socket) {
+				this.console.lines.push("> " + text);
+				this.socket.send(text);
+				this.console.input = "";
+				this.console.history.push(text);
+				this.console.index = this.console.history.length;
+			}
+			else {
+				this.console.lines.push("Please connect to the host first.");
+			}
+		},
+		consoleClear(e) {
+			this.console.lines = [];
+		},
+		consoleHistoryNav(dir) {
+			let index = this.console.index + dir;
+			index = Math.min(index, this.console.history.length);
+			index = Math.max(index, 0);
+			if (index != this.console.index) {
+				if (index >= 0 && index < this.console.history.length) {
+					this.console.input = this.console.history[index];
+				}
+				else {
+					this.console.input = "";
+				}
+				this.console.index = index;
+			}
+		},
+		debugWrite(message) {
+			if (!this.paused) {
+				this.debugText[message.scope] = "" + message.content;
+			}
+		},
+	},
+	mounted() {
+		let args = argv();
+		if ('address' in args) {
+			this.connection.address = args.address;
+		}
+	},
+};
+window.onload = e => {
+	Vue.createApp(app).mount('#app');
+};
+</script>
+<style>
+html, body, #app>div, #app>div>section {
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	margin: 0;
+	padding: 0;
+}
+#app {
+	display: grid;
+	grid-template: max-content 100% / 100%;
+}
+#app>header {
+	display: flex;
+	flex-direction: row;
+	border-bottom: 1px black solid;
+}
+#app>header>div:first-child {
+	width: 10em;
+}
+#app>main {
+	padding-left: 10em;
+}
+#app>main>section {
+	height: 100%;
+}
+#connection > form {
+	display: flex;
+	flex-direction: column;
+	max-width: 50rem;
+}
+#connection > form > label {
+	margin-top: 0.5rem;
+}
+#console {
+	display: grid;
+	grid-template: max-content max-content auto / auto;
+}
+#console .lines {
+	overflow-y: scroll;
+	white-space: pre;
+	font-family: 'Fira Code', monospace;
+}
+#debugger {
+	display: grid;
+	grid-template: 100% / 10em auto;
+	height: 100%;
+}
+#debugger>nav {
+	padding-top: 3em;
+}
+#debugger>div {
+	height: 100%;
+	overflow: scroll;
+}
+</style>
+
+</head>
+<body id="app">
+	<header>
+		<div>Admin</div>
+		<div><button @click="openPanel('connection')">Connection</button></div>
+		<template v-if="connection.isready">
+			<div><button @click="openPanel('console')">Console</button></div>
+			<div><button @click="openPanel('debugger')">Debugger</button></div>
+		</template>
+	</header>
+	<main>
+		<section v-if="viewPanel == 'connection'" id="connection">
+			<h2>Connection</h2>
+			<form @submit.prevent="connect">
+				<label>Address:</label>
+				<input type="text" v-model="connection.address" :readonly="socket != null" :disabled="socket != null">
+				<span v-if="connection.error" class="connection-error">{{ connection.error }}</span>
+				<label>Share:</label>
+				<input type="text" :value="shareURL" readonly="readonly">
+				<input v-if="socket == null" type="submit" value="Connect">
+				<input v-if="socket != null" type="submit" value="Disconnect">
+			</form>
+		</section>
+		<section v-if="viewPanel == 'console'" id="console">
+			<h2>Console</h2>
+			<p>&gt; <input
+				type="text"
+				v-model="console.input"
+				@keyup.enter="consoleInput"
+				@keyup.up="consoleHistoryNav(-1)"
+				@keyup.down="consoleHistoryNav(1)"> <button @click="consoleClear">Clear</button></p>
+			<div class="lines" :ref="consoleLinesRef">
+				<p v-for="line in console.lines" :key="line" class="line">{{ line }}</p>
+			</div>
+		</section>
+		<section v-if="viewPanel == 'debugger'" id="debugger">
+			<nav>
+				<div><button @click="togglePause()">{{ paused ? "Unpause" : "Pause" }}</button></div>
+				<template v-for="key in Object.keys(debugText)" :key="key">
+					<div><button @click="debugPanel = key">{{ key }}</button></div>
+				</template>
+			</nav>
+			<div v-if="debugPanel in debugText" v-html="debugText[debugPanel]"></div>
+		</section>
+	</main>
+</body>
+</html>

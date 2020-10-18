@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Overlay - Vision Project</title>
+<style>
+head, body {
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	height: 100%;
+	color: transparent;
+	overflow: hidden;
+}
+.outline {
+	text-shadow: rgb(0, 0, 0) 1px 0px 0px, rgb(0, 0, 0) 0.540302px 0.841471px 0px, rgb(0, 0, 0) -0.416147px 0.909297px 0px, rgb(0, 0, 0) -0.989993px 0.14112px 0px, rgb(0, 0, 0) -0.653644px -0.756803px 0px, rgb(0, 0, 0) 0.283662px -0.958924px 0px, rgb(0, 0, 0) 0.96017px -0.279416px 0px;
+	font-family: 'Roboto', 'Segoe UI', sans-serif;
+}
+#debug {
+	position: absolute;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	color: blue;
+}
+#names {
+	position: absolute;
+	left: 0;
+	top: 360px;
+	min-width: 160px;
+	color: lightgoldenrodyellow;
+	background-color: rgba(0, 0, 0, 10%);
+}
+#status {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	color: lightblue;
+}
+#fps {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	color: orangered;
+	background-color: rgba(0, 0, 0, 10%);
+}
+#canvas {
+	position: absolute;
+	width: 100%;
+	height: 100%;
+}
+</style>
+</head>
+<body>
+	<div id="debug"></div>
+	<ul id="names" class="outline"></ul>
+	<div id="status"></div>
+	<div id="fps" class="outline"></div>
+	<canvas id="canvas"></canvas>
+</body>
+<script>
+"use strict"
+
+const ARGS = (() => {
+	let result = {};
+	for (var arg of window.location.hash.substring(1).split("&")) {
+		let pos = arg.indexOf("=");
+		if (pos >= 0) {
+			result[arg.substring(0, pos)] = decodeURIComponent(arg.substring(pos + 1));
+		}
+	}
+	return result;
+})();
+
+let FPS = 60.0;
+let NOW = 0;
+function fps() {
+	let curtime = performance.now();
+	let frametime = (curtime - NOW) / 1000.0;
+	NOW = curtime;
+	FPS = FPS * 9.0/10.0 + (1.0/frametime)/10.0;
+	if (!Number.isFinite(FPS))
+	{
+		FPS = 60.0;
+	}
+	let div = document.getElementById('fps');
+	if (div) {
+		div.textContent = FPS.toFixed(1) + " FPS";
+	}
+}
+
+let DRAW = null;
+function render(timestamp) {
+	let draw = DRAW;
+	if (draw)
+	{
+		DRAW = null;
+		let canvas = document.getElementById('canvas');
+		canvas.width = window.innerWidth;
+		canvas.height = window.innerHeight;
+		let ctx = canvas.getContext('2d');
+		// Start by clearing the canvas
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		ctx.globalAlpha = 0.8;
+		for (let cmd of draw) {
+			switch (cmd.ty) {
+				case 'rect':
+					{
+						let x = Math.round(cmd.x) + 0.5;
+						let y = Math.round(cmd.y) + 0.5;
+						let w = Math.round(cmd.w);
+						let h = Math.round(cmd.h);
+						if (cmd.fill) {
+							ctx.fillStyle = cmd.fill;
+							ctx.fillRect(x, y, w, h);
+						}
+						if (cmd.inset) {
+							ctx.strokeStyle = cmd.inset;
+							ctx.lineWidth = 1.0;
+							ctx.strokeRect(x + 1.0, y + 1.0, w, h);
+						}
+						if (cmd.stroke) {
+							ctx.strokeStyle = cmd.stroke;
+							ctx.lineWidth = 1.0;
+							ctx.strokeRect(x, y, w, h);
+						}
+					}
+					break;
+				case 'path':
+					if (cmd.fill) {
+						//unimplemented
+						ctx.fillStyle = cmd.fill;
+					}
+					if (cmd.stroke) {
+						ctx.strokeStyle = cmd.stroke;
+						ctx.lineWidth = 1.0;
+						ctx.stroke(new Path2D(cmd.path));
+					}
+					break;
+				case 'text':
+					ctx.font = cmd.font;
+					if (cmd.stroke) {
+						ctx.strokeStyle = cmd.stroke;
+						ctx.lineWidth = 3.0;
+						ctx.strokeText(cmd.string, cmd.x, cmd.y, cmd.max);
+					}
+					if (cmd.fill) {
+						ctx.fillStyle = cmd.fill;
+						ctx.fillText(cmd.string, cmd.x, cmd.y, cmd.max);
+					}
+					break;
+				case 'sprite':
+					if (cmd.id in SPRITES) {
+						let desc = SPRITES[cmd.id];
+						let sx = desc.x;
+						let sy = desc.y;
+						let sWidth = desc.w;
+						let sHeight = desc.h;
+						let dWidth = cmd.w === undefined ? desc.w : cmd.w;
+						let dHeight = cmd.h === undefined ? desc.h : cmd.h;
+						let dx = cmd.x - dWidth * 0.5;
+						let dy = cmd.y - dHeight * 0.5;
+						ctx.drawImage(desc.img, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
+					}
+					break;
+				case 'espbox':
+					// Draw box
+					if (cmd.flags & 0x1) {
+						let x = Math.round(cmd.x) + 0.5;
+						let y = Math.round(cmd.y) + 0.5;
+						let w = Math.round(cmd.w);
+						let h = Math.round(cmd.h);
+						ctx.lineWidth = 1.0;
+						ctx.strokeStyle = "black";
+						ctx.strokeRect()
+						drawRect(cmd.x, cmd.y)
+					}
+					break;
+				default:
+					break;
+			}
+		}
+	}
+	requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+let SPRITES = {};
+const ROUTES = {
+	debug(debug) {
+		let div = document.getElementById('debug');
+		div.innerHTML = debug;
+		// console.log(debug);
+	},
+	status(status) {
+		let div = document.getElementById('status');
+		div.textContent = status;
+	},
+	draw(draw) {
+		DRAW = draw;
+		fps();
+	},
+	names(names) {
+		let ul = document.getElementById('names');
+		ul.textContent = "";
+		if (names.length > 0) {
+			for (let name of names) {
+				let li = document.createElement('li');
+				li.textContent = name;
+				ul.appendChild(li);
+			}
+		}
+	},
+	/// Preloads sprites.
+	sprites(sprites) {
+		SPRITES = {};
+		let img = document.createElement('img');
+		img.src = sprites.url;
+		for (let sprite of sprites.sprites) {
+			SPRITES[sprite.id] = { img, ...sprite };
+		}
+	},
+	/// Reloads the current window.
+	reload() {
+		window.location.reload();
+	},
+};
+function connect(url) {
+	console.log("Connecting to " + url + "...");
+	let ws = window.SOCKET = new WebSocket(url);
+	function sendReply() {
+		if (ws.readyState == WebSocket.OPEN) {
+			ws.send(ARGS.reply);
+		}
+	}
+	let timer = null;
+	if (ARGS.fps) {
+		timer = setInterval(sendReply, 1000.0 / ARGS.fps);
+	}
+	ws.addEventListener('open', () => {
+		console.log("Connected to " + url);
+		if (ARGS.hello) {
+			ws.send(ARGS.hello)
+		}
+	});
+	ws.addEventListener('message', e => {
+		if (ARGS.reply && !ARGS.fps) {
+			ws.send(ARGS.reply);
+		}
+		try {
+			let data = JSON.parse(e.data);
+			if (ARGS.debug) {
+				ROUTES.debug(e.data);
+			}
+			if (data.target in ROUTES) {
+				ROUTES[data.target](data.message);
+			}
+			else {
+				console.log(e.data);
+			}
+		}
+		catch (ex) {
+			console.error(ex);
+		}
+	});
+	ws.addEventListener('close', e => {
+		console.log("WebSocket is closed, reconnecting in 5 seconds...", e.reason);
+		ws = window.SOCKET = null;
+		clearInterval(timer);
+		timer = null;
+		setTimeout(() => connect(url), 5000);
+	});
+	ws.addEventListener('error', e => {
+		console.log("WebSocket error, closing socket...", e.message);
+		ws.close();
+	});
+}
+console.log(ARGS);
+if (ARGS.url) {
+	connect(ARGS.url);
+}
+else {
+	ROUTES.sprites([
+		{
+			url: "https://mdn.mozillademos.org/files/5397/rhino.jpg",
+			sprites: [
+				{ id: "rhino", x: 20, y: 20, w: 100, h: 100 },
+			],
+		},
+	]);
+	ROUTES.names([
+		"Alfred",
+		"Betty",
+		"Tom",
+	]);
+	setTimeout(() => ROUTES.draw([
+		{
+			ty: "rect",
+			x: 10.0,
+			y: 10.0,
+			w: 100.0,
+			h: 100.0,
+			fill: "rgba(0,0,255,0.5)"
+		},
+		{
+			ty: "text",
+			x: 10.0,
+			y: 200.0,
+			string: "Hello World",
+			font: "48px serif",
+			fill: "red",
+			stroke: "black"
+		},
+		{
+			ty: "sprite",
+			id: "rhino",
+			x: 240.0,
+			y: 80.0,
+		},
+	]), 10);
+}
+</script>
+</html>
